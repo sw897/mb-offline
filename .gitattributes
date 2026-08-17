@@ -6,3 +6,5 @@ Dockerfile text
 .gitignore text
 .gitattributes text
 *.patch text
+*.py text
+*.geojson text

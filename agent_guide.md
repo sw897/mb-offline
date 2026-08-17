@@ -10,7 +10,7 @@ This file is the single authoritative project guide for coding and research agen
 
 `mb-offline` is a tool for downloading Mapbox-hosted vector tiles so map data can be used offline. The historical implementation adapts the offline-cache mechanism from Mapbox GL Native and packages the resulting `mbgl-offline` CLI for Docker use.
 
-The repository currently contains the selected Docker-based native implementation, its patches, agent documentation, and ignore rules. There is no separate application source tree or test suite; the Docker build compiles the pinned upstream C++ project directly.
+The repository contains the selected Docker-based native implementation, its patches, a Python download wrapper, offline tests, agent documentation, and ignore rules. The Docker build compiles the pinned upstream C++ project directly.
 
 ## Product Scope
 
@@ -69,6 +69,47 @@ docker image inspect mbgl-offline:2.0 \
 `--help` and `ldd` completed successfully, and the image label reported the pinned revision. An unauthenticated zero-area request reached Mapbox and returned `HTTP 401`; the upstream CLI then remained in its run loop until interrupted. Send `SIGINT` (`Ctrl-C` when interactive) to stop it gracefully. Do not use a real token for this smoke test.
 
 The verified unpacked image size is 36,247,441 bytes. Do not treat a locally generated image manifest ID as permanent; BuildKit attestation metadata can change it even when the image config and layers are cached.
+
+## Download Wrapper
+
+`scripts/download.py` is the supported entry point for regional downloads. It validates input, estimates the tile grid before starting, stages GeoJSON input, invokes the Docker image, and keeps Mapbox credentials out of command-line arguments and repository files.
+
+### Credentials
+
+The script intentionally has no `--token` option. Supply a rotated token through one of:
+
+1. `MAPBOX_ACCESS_TOKEN` in the environment.
+2. A local ignored `.env` file containing `MAPBOX_ACCESS_TOKEN=...`.
+3. An explicit ignored file with `--env-file FILE`.
+4. The secure interactive prompt when no file or environment value is present.
+
+The value is passed to Docker as an environment variable and is never printed. A token shared in chat, screenshots, logs, or shell history must be rotated.
+
+### Bounding-Box Download
+
+```sh
+./scripts/download.py \
+  --bbox 115.4168,39.4420,117.5083,41.059 \
+  --min-zoom 11 \
+  --max-zoom 16 \
+  --output map.db
+```
+
+Add `--dry-run` to inspect the estimate and sanitized Docker command without network access. Add `--yes` for non-interactive confirmed runs and `--overwrite` only when replacing an existing database is intended.
+
+### GeoJSON Region
+
+```sh
+./scripts/download.py \
+  --geojson region.geojson \
+  --min-zoom 11 \
+  --max-zoom 16 \
+  --output map.db
+```
+
+GeoJSON input must be one Feature or geometry. The upstream CLI rejects `FeatureCollection`; extract the needed feature first. The script reports a conservative bounding-box tile estimate for GeoJSON; the native downloader applies the actual geometry.
+
+Other useful options are `--style`, `--pixel-ratio`, `--include-ideographs`, `--api-base-url`, and `--image`. Use `--help` for the full contract.
 
 ## Historical Reference
 
@@ -202,7 +243,7 @@ Style-optimized tiles reduce payload size, but they bake in the referenced style
 - [tilemaker](https://github.com/systemed/tilemaker) converts OSM PBF extracts directly to MBTiles or PMTiles without a database stack. It includes OpenMapTiles-compatible configurations and Docker images.
 - [Martin](https://github.com/maplibre/martin) and [tileserver-gl](https://github.com/maptiler/tileserver-gl) are actively maintained options for serving MBTiles/PMTiles locally or privately.
 
-For the historical Beijing-area request (`north=41.059`, `west=115.4168`, `south=39.4420`, `east=117.5083`, z11-z16), standard Web Mercator XYZ enumeration produces **195,808 tiles**. Any replacement must show this estimate, expected storage, request rate, and resume plan before starting.
+For the historical Beijing-area request (`north=41.059`, `west=115.4168`, `south=39.4420`, `east=117.5083`, z11-z16), standard Web Mercator XYZ intersection produces **197,321 tiles**. The earlier `195,808` figure incorrectly subtracted the east and south boundary tile even when the boundary fell inside a tile. Any run must show this estimate, expected storage, request rate, and continuation plan before starting.
 
 Out of scope unless explicitly requested:
 
@@ -245,7 +286,9 @@ Current implementation facts:
 
 - Implementation language and build system: upstream C++14 with CMake, compiled in Docker on Ubuntu Focal.
 - Required host tool: Docker or an equivalent BuildKit-capable builder.
+- Download wrapper runtime: Python 3.9 or newer; standard library only.
 - Primary build and validation commands are documented under `Current Build`.
+- Offline wrapper tests: `python3 -m unittest discover -s tests`.
 - Git baseline branch: `main`.
 - Git remote: use the existing locally configured `origin`; do not embed private remote URLs in public documentation.
 - Keep commits atomic and describe why the change is needed, not merely which files changed.
