@@ -1,0 +1,5 @@
+diff --git a/platform/linux/linux.cmake b/platform/linux/linux.cmake
+--- a/platform/linux/linux.cmake
++++ b/platform/linux/linux.cmake
+@@ -101 +100,0 @@
+-add_subdirectory(${PROJECT_SOURCE_DIR}/platform/glfw)

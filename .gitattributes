@@ -1,0 +1,8 @@
+* text=auto
+
+*.md text
+Dockerfile text
+.dockerignore text
+.gitignore text
+.gitattributes text
+*.patch text

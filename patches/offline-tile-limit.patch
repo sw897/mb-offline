@@ -1,0 +1,6 @@
+diff --git a/src/mbgl/util/mapbox.cpp b/src/mbgl/util/mapbox.cpp
+--- a/src/mbgl/util/mapbox.cpp
++++ b/src/mbgl/util/mapbox.cpp
+@@ -170 +170 @@
+-const uint64_t DEFAULT_OFFLINE_TILE_COUNT_LIMIT = 6000;
++const uint64_t DEFAULT_OFFLINE_TILE_COUNT_LIMIT = 2147483647;
