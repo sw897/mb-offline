@@ -1,5 +1,7 @@
 .env
 .env.*
+.DS_Store
+*.baiduyun.uploading.cfg
 __pycache__/
 .venv/
 *.db
