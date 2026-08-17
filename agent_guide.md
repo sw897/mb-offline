@@ -111,6 +111,18 @@ GeoJSON input must be one Feature or geometry. The upstream CLI rejects `Feature
 
 Other useful options are `--style`, `--pixel-ratio`, `--include-ideographs`, `--api-base-url`, and `--image`. Use `--help` for the full contract.
 
+## MBTiles Export
+
+`scripts/export_mbtiles.py` converts a Mapbox GL Native offline-cache schema-v6 database to an MBTiles 1.3 vector-tile archive:
+
+```sh
+./scripts/export_mbtiles.py data/map-hk.db data/map-hk.mbtiles
+```
+
+The exporter opens the source read-only and immutable, rejects source databases with SQLite sidecars, reverses XYZ `y` coordinates to MBTiles TMS rows, skips null tile records, and writes tiles as gzip-compressed PBF. Compressed GL-cache tiles keep their original DEFLATE body; only the zlib wrapper is replaced. It derives bounds, zooms, and vector-layer field metadata, then creates the destination through a temporary database and atomic replacement.
+
+The output contains tile data and MBTiles metadata, not a complete self-contained Mapbox style. Styles, sprites, and glyph resources remain in the GL cache and require separate handling for offline rendering. Use `--overwrite` only when intentionally replacing an existing MBTiles file. If the source has a `-journal`, `-wal`, or `-shm` sidecar, recover or remove that sidecar safely before conversion.
+
 ## Historical Reference
 
 The reference implementation is a Docker build based on [mapbox/mapbox-gl-native](https://github.com/mapbox/mapbox-gl-native). GitHub archived that repository on 2023-08-08, so this project must treat it as a frozen dependency rather than an actively maintained upstream.
@@ -286,9 +298,9 @@ Current implementation facts:
 
 - Implementation language and build system: upstream C++14 with CMake, compiled in Docker on Ubuntu Focal.
 - Required host tool: Docker or an equivalent BuildKit-capable builder.
-- Download wrapper runtime: Python 3.9 or newer; standard library only.
+- Download wrapper and MBTiles exporter runtime: Python 3.9 or newer; standard library only.
 - Primary build and validation commands are documented under `Current Build`.
-- Offline wrapper tests: `python3 -m unittest discover -s tests`.
+- Offline implementation tests: `python3 -m unittest discover -s tests`.
 - Git baseline branch: `main`.
 - Git remote: use the existing locally configured `origin`; do not embed private remote URLs in public documentation.
 - Keep commits atomic and describe why the change is needed, not merely which files changed.
