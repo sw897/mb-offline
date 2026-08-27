@@ -10,3 +10,4 @@ __pycache__/
 *.db-journal
 output/
 workdir/
+data/
