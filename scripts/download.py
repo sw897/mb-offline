@@ -9,6 +9,7 @@ import json
 import math
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import uuid
@@ -20,6 +21,7 @@ from typing import Iterator, Optional
 MAX_LATITUDE = 85.0511287798066
 MAX_GEOJSON_BYTES = 50 * 1024 * 1024
 TOKEN_ENV_NAME = "MAPBOX_ACCESS_TOKEN"
+ZXY_INDEX_NAME = "tiles_zxy_unique"
 
 
 class UserFacingError(Exception):
@@ -346,6 +348,48 @@ def remove_output(output: Path) -> None:
             sidecar.unlink()
 
 
+def ensure_unique_zxy_index(output: Path) -> None:
+    try:
+        connection = sqlite3.connect(output)
+    except sqlite3.Error as error:
+        raise UserFacingError(f"cannot open downloaded database: {error}") from error
+
+    try:
+        try:
+            connection.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {ZXY_INDEX_NAME} ON tiles(z,x,y)"
+            )
+            connection.commit()
+        except sqlite3.IntegrityError as error:
+            connection.rollback()
+            duplicate = connection.execute(
+                """SELECT z,x,y,COUNT(*),COUNT(DISTINCT url_template),
+                          COUNT(DISTINCT pixel_ratio)
+                   FROM tiles
+                   GROUP BY z,x,y
+                   HAVING COUNT(*) > 1
+                   LIMIT 1"""
+            ).fetchone()
+            detail = ""
+            if duplicate is not None:
+                z, x, y, rows, templates, ratios = duplicate
+                detail = (
+                    f"; {z}/{x}/{y} has {rows} rows across "
+                    f"{templates} URL template(s) and {ratios} pixel ratio(s)"
+                )
+            raise UserFacingError(
+                "downloaded database cannot provide unique z/x/y tile lookup"
+                f"{detail}; the database was kept at {output}"
+            ) from error
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise UserFacingError(
+                f"cannot create z/x/y tile index in {output}: {error}"
+            ) from error
+    finally:
+        connection.close()
+
+
 def positive_float(value: str) -> float:
     result = finite_float(value, "pixel ratio")
     if result <= 0:
@@ -529,6 +573,8 @@ def run(args: argparse.Namespace) -> int:
     if not output.is_file():
         raise UserFacingError("mbgl-offline exited successfully but the output database was not created")
 
+    print("Building unique z/x/y tile index...")
+    ensure_unique_zxy_index(output)
     print(f"Download complete: {output}")
     return 0
 

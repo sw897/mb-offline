@@ -7,6 +7,7 @@ import struct
 import tempfile
 import unittest
 import zlib
+from contextlib import closing
 from pathlib import Path
 
 
@@ -231,7 +232,7 @@ class ExportMbtilesTests(unittest.TestCase):
         self.assertEqual(summary.recompressed_tiles, 1)
         self.assertEqual(summary.repacked_tiles, 2)
 
-        with sqlite3.connect(self.destination) as connection:
+        with closing(sqlite3.connect(self.destination)) as connection:
             self.assertEqual(
                 connection.execute("PRAGMA integrity_check").fetchone()[0], "ok"
             )
@@ -265,6 +266,62 @@ class ExportMbtilesTests(unittest.TestCase):
             self.assertEqual(
                 vector_metadata["vector_layers"][1]["fields"],
                 {"name": "String"},
+            )
+
+    def test_source_cache_point_lookup_uses_unique_tile_key_index(self):
+        with closing(sqlite3.connect(self.source)) as connection:
+            tile_indexes = connection.execute("PRAGMA index_list('tiles')").fetchall()
+            unique_index = next(row for row in tile_indexes if row[2] == 1)
+            columns = [
+                row[2]
+                for row in connection.execute(
+                    f"PRAGMA index_info('{unique_index[1]}')"
+                )
+            ]
+            self.assertEqual(
+                columns,
+                ["url_template", "pixel_ratio", "z", "x", "y"],
+            )
+
+            plan = connection.execute(
+                """EXPLAIN QUERY PLAN
+                   SELECT data FROM tiles
+                   WHERE url_template=? AND pixel_ratio=? AND z=? AND x=? AND y=?""",
+                ("template", 1, 1, 1, 1),
+            ).fetchall()
+            self.assertTrue(
+                any(unique_index[1] in row[3] for row in plan),
+                plan,
+            )
+
+    def test_mbtiles_point_lookup_uses_coordinate_index(self):
+        export_mbtiles.convert(self.source, self.destination, quiet=True)
+
+        with closing(sqlite3.connect(self.destination)) as connection:
+            tile_index = next(
+                row
+                for row in connection.execute("PRAGMA index_list('tiles')")
+                if row[1] == "tile_index"
+            )
+            self.assertEqual(tile_index[2], 1)
+            columns = [
+                row[2]
+                for row in connection.execute("PRAGMA index_info('tile_index')")
+            ]
+            self.assertEqual(
+                columns,
+                ["zoom_level", "tile_column", "tile_row"],
+            )
+
+            plan = connection.execute(
+                """EXPLAIN QUERY PLAN
+                   SELECT tile_data FROM tiles
+                   WHERE zoom_level=? AND tile_column=? AND tile_row=?""",
+                (1, 1, 0),
+            ).fetchall()
+            self.assertTrue(
+                any("tile_index" in row[3] for row in plan),
+                plan,
             )
 
     def test_reuses_deflate_body_when_repacking_zlib(self):

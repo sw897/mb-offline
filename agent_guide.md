@@ -85,6 +85,24 @@ The script intentionally has no `--token` option. Supply a rotated token through
 
 The value is passed to Docker as an environment variable and is never printed. A token shared in chat, screenshots, logs, or shell history must be rotated.
 
+The downloaded schema-v6 database is created by Mapbox GL Native. Its `tiles`
+table has a unique SQLite index on
+`(url_template, pixel_ratio, z, x, y)`, which matches the native cache's full
+tile-key lookup. It also has an `accessed` index for cache eviction. After a
+successful download, the wrapper creates the additional unique index
+`tiles_zxy_unique` on `(z, x, y)` for direct XYZ tile serving. Creating that
+index also verifies that the selected style produced at most one tile row per
+coordinate. If a style produces multiple URL templates or pixel ratios for the
+same coordinate, the wrapper keeps the downloaded database but reports that it
+is ambiguous for direct `z/x/y` publication.
+
+Direct serving uses XYZ coordinates and should query
+`SELECT data, compressed FROM tiles WHERE z=? AND x=? AND y=?`. A non-null
+record with `compressed=1` contains a zlib-wrapped DEFLATE stream, not an HTTP
+gzip stream. The serving layer must decompress it or replace the zlib wrapper
+with a valid gzip wrapper before sending `Content-Encoding: gzip`; the MBTiles
+exporter already performs that repacking for converted archives.
+
 ### Bounding-Box Download
 
 ```sh
@@ -122,6 +140,13 @@ Other useful options are `--style`, `--pixel-ratio`, `--include-ideographs`, `--
 The exporter opens the source read-only and immutable, rejects source databases with SQLite sidecars, reverses XYZ `y` coordinates to MBTiles TMS rows, skips null tile records, and writes tiles as gzip-compressed PBF. Compressed GL-cache tiles keep their original DEFLATE body; only the zlib wrapper is replaced. It derives bounds, zooms, and vector-layer field metadata, then creates the destination through a temporary database and atomic replacement.
 
 The output contains tile data and MBTiles metadata, not a complete self-contained Mapbox style. Styles, sprites, and glyph resources remain in the GL cache and require separate handling for offline rendering. Use `--overwrite` only when intentionally replacing an existing MBTiles file. If the source has a `-journal`, `-wal`, or `-shm` sidecar, recover or remove that sidecar safely before conversion.
+
+The exporter bulk-loads the destination and then creates the unique
+`tile_index` on `(zoom_level, tile_column, tile_row)`. Standard MBTiles point
+queries using all three coordinates therefore use an indexed lookup. The
+source scan deliberately has no `ORDER BY` because conversion correctness does
+not depend on input row order, and a sequential scan avoids unnecessary sorting
+or index traversal.
 
 ## Historical Reference
 

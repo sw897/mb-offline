@@ -1,10 +1,12 @@
 import importlib.util
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -125,6 +127,94 @@ class DownloadScriptTests(unittest.TestCase):
             download.remove_output(resolved)
 
             self.assertFalse(output.exists())
+
+    def test_builds_unique_zxy_index_for_direct_tile_lookup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "map.db"
+            with closing(sqlite3.connect(output)) as connection:
+                connection.execute(
+                    """CREATE TABLE tiles (
+                           url_template TEXT NOT NULL,
+                           pixel_ratio INTEGER NOT NULL,
+                           z INTEGER NOT NULL,
+                           x INTEGER NOT NULL,
+                           y INTEGER NOT NULL,
+                           data BLOB
+                       )"""
+                )
+                connection.executemany(
+                    "INSERT INTO tiles VALUES (?,?,?,?,?,?)",
+                    [
+                        ("template", 1, 10, 843, 388, b"first"),
+                        ("template", 1, 10, 844, 388, b"second"),
+                    ],
+                )
+                connection.commit()
+
+            download.ensure_unique_zxy_index(output)
+
+            with closing(sqlite3.connect(output)) as connection:
+                index = next(
+                    row
+                    for row in connection.execute("PRAGMA index_list('tiles')")
+                    if row[1] == download.ZXY_INDEX_NAME
+                )
+                self.assertEqual(index[2], 1)
+                columns = [
+                    row[2]
+                    for row in connection.execute(
+                        f"PRAGMA index_info('{download.ZXY_INDEX_NAME}')"
+                    )
+                ]
+                self.assertEqual(columns, ["z", "x", "y"])
+                plan = connection.execute(
+                    """EXPLAIN QUERY PLAN
+                       SELECT data FROM tiles WHERE z=? AND x=? AND y=?""",
+                    (10, 843, 388),
+                ).fetchall()
+                self.assertTrue(
+                    any(download.ZXY_INDEX_NAME in row[3] for row in plan),
+                    plan,
+                )
+
+    def test_rejects_ambiguous_zxy_tiles_and_keeps_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "map.db"
+            with closing(sqlite3.connect(output)) as connection:
+                connection.execute(
+                    """CREATE TABLE tiles (
+                           url_template TEXT NOT NULL,
+                           pixel_ratio INTEGER NOT NULL,
+                           z INTEGER NOT NULL,
+                           x INTEGER NOT NULL,
+                           y INTEGER NOT NULL
+                       )"""
+                )
+                connection.executemany(
+                    "INSERT INTO tiles VALUES (?,?,?,?,?)",
+                    [
+                        ("vector", 1, 10, 843, 388),
+                        ("raster", 2, 10, 843, 388),
+                    ],
+                )
+                connection.commit()
+
+            with self.assertRaisesRegex(
+                download.UserFacingError,
+                r"10/843/388 has 2 rows across 2 URL template\(s\) and 2 pixel ratio\(s\)",
+            ):
+                download.ensure_unique_zxy_index(output)
+
+            self.assertTrue(output.is_file())
+            with closing(sqlite3.connect(output)) as connection:
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM tiles").fetchone()[0],
+                    2,
+                )
+                index_names = {
+                    row[1] for row in connection.execute("PRAGMA index_list('tiles')")
+                }
+                self.assertNotIn(download.ZXY_INDEX_NAME, index_names)
 
     def test_cli_help_and_bbox_dry_run_do_not_require_a_token(self):
         for arguments in (

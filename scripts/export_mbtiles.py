@@ -445,9 +445,9 @@ def convert(
         target_connection = _create_target(temporary, page_size)
 
         cursor = source_connection.execute(
-            "SELECT z,x,y,data,compressed FROM tiles ORDER BY z,x,y"
+            "SELECT z,x,y,data,compressed FROM tiles"
         )
-        zooms: list[int] = []
+        zooms: set[int] = set()
         while True:
             rows = cursor.fetchmany(batch_size)
             if not rows:
@@ -460,10 +460,7 @@ def convert(
                 if not 0 <= z <= 24 or not 0 <= x < (1 << z) or not 0 <= y < (1 << z):
                     raise UserFacingError(f"tile coordinate outside valid range: {z}/{x}/{y}")
                 bounds = _union_bounds(bounds, _tile_bounds(z, x, y))
-                if not zooms or zooms[-1] != z:
-                    if z in zooms:
-                        raise UserFacingError("source tile query is not ordered by zoom")
-                    zooms.append(z)
+                zooms.add(z)
                 if compressed:
                     tile_data, raw_tile = zlib_to_gzip(blob)
                     repacked += 1
@@ -488,9 +485,11 @@ def convert(
             raise UserFacingError("source contains no non-null tiles")
         if bounds is None:
             raise UserFacingError("could not determine output bounds")
-        if len(zooms) != zooms[-1] - zooms[0] + 1:
+        min_zoom = min(zooms)
+        max_zoom = max(zooms)
+        if len(zooms) != max_zoom - min_zoom + 1:
             raise UserFacingError("source zoom range contains gaps")
-        zoom_range = (zooms[0], zooms[-1])
+        zoom_range = (min_zoom, max_zoom)
 
         target_connection.execute("CREATE UNIQUE INDEX tile_index ON tiles(zoom_level,tile_column,tile_row)")
         _write_metadata(
