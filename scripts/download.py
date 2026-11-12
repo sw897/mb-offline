@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Prepare and run bounded mbgl-offline downloads."""
 
 from __future__ import annotations
@@ -287,6 +288,10 @@ def build_docker_command(
         "run",
         "--rm",
         "--init",
+    ]
+    if hasattr(os, "getuid") and hasattr(os, "getgid"):
+        command.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+    command.extend([
         "--env",
         TOKEN_ENV_NAME,
         "--volume",
@@ -294,7 +299,7 @@ def build_docker_command(
         "--workdir",
         "/workdir",
         config.image,
-    ]
+    ])
 
     command.extend([f"--style={config.style}"])
     command.extend([f"--minZoom={config.min_zoom}", f"--maxZoom={config.max_zoom}"])

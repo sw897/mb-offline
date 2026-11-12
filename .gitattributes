@@ -8,3 +8,11 @@ Dockerfile text
 *.patch text
 *.py text
 *.geojson text
+LICENSE text
+NOTICE text
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+
+# Keep upstream license snapshots byte-for-byte, including original whitespace.
+licenses/mapbox-gl-native/** -text -whitespace

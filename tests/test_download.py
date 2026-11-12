@@ -86,11 +86,15 @@ class DownloadScriptTests(unittest.TestCase):
             api_base_url=None,
         )
 
-        command = download.build_docker_command(config, container_geojson=None)
+        with mock.patch.multiple(
+            download.os, getuid=lambda: 1234, getgid=lambda: 5678, create=True
+        ):
+            command = download.build_docker_command(config, container_geojson=None)
 
         self.assertEqual(command[:3], ["docker", "run", "--rm"])
         self.assertIn("--env", command)
         self.assertIn("MAPBOX_ACCESS_TOKEN", command)
+        self.assertEqual(command[command.index("--user") + 1], "1234:5678")
         self.assertNotIn("--token", command)
         self.assertIn("--volume", command)
         self.assertIn("--north=41.0", command)

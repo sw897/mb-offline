@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.14']
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run offline tests and CLI checks
+        env:
+          MAPBOX_ACCESS_TOKEN: ''
+        run: |
+          python -m unittest discover -s tests
+          python scripts/download.py --help
+          python scripts/export_mbtiles.py --help
+          python scripts/download.py --bbox 116.38,39.90,116.42,39.94 --min-zoom 11 --max-zoom 12 --output data/preview.db --dry-run
+          python scripts/download.py --geojson tests/fixtures/beijing.geojson --min-zoom 11 --max-zoom 12 --output data/region.db --dry-run
+
+  docker:
+    name: Docker ${{ matrix.architecture }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+            platform: linux/amd64
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build local image
+        env:
+          BUILD_PLATFORM: ${{ matrix.platform }}
+          PROJECT_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+          PROJECT_REVISION: ${{ github.sha }}
+        run: |
+          docker buildx build --load --progress=plain \
+            --platform "$BUILD_PLATFORM" \
+            --build-arg SOURCE_URL="$PROJECT_SOURCE_URL" \
+            --build-arg SOURCE_REVISION="$PROJECT_REVISION" \
+            --tag mbgl-offline:ci .
+      - name: Check runtime without network access
+        run: sh scripts/check_image.sh mbgl-offline:ci

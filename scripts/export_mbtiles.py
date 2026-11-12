@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Convert a Mapbox GL Native offline cache to an MBTiles 1.3 file."""
 
 from __future__ import annotations
