@@ -1,13 +1,15 @@
 import gzip
 import importlib.util
+import io
 import json
+import os
 import sqlite3
-import sys
 import struct
+import sys
 import tempfile
 import unittest
 import zlib
-from contextlib import closing
+from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
 
 
@@ -86,11 +88,12 @@ def vector_tile() -> bytes:
     return length_field(3, water) + length_field(3, road)
 
 
-def create_cache(path: Path) -> None:
+def create_cache(path: Path, schema_version: int = 6) -> None:
+    if schema_version not in (5, 6):
+        raise ValueError("fixture schema must be 5 or 6")
     connection = sqlite3.connect(path)
     connection.executescript(
         """
-        PRAGMA user_version = 6;
         CREATE TABLE regions (
             id INTEGER PRIMARY KEY,
             definition TEXT NOT NULL,
@@ -106,7 +109,6 @@ def create_cache(path: Path) -> None:
             data BLOB,
             compressed INTEGER NOT NULL DEFAULT 0,
             accessed INTEGER NOT NULL,
-            must_revalidate INTEGER NOT NULL DEFAULT 0,
             UNIQUE (url)
         );
         CREATE TABLE tiles (
@@ -122,11 +124,17 @@ def create_cache(path: Path) -> None:
             data BLOB,
             compressed INTEGER NOT NULL DEFAULT 0,
             accessed INTEGER NOT NULL,
-            must_revalidate INTEGER NOT NULL DEFAULT 0,
             UNIQUE (url_template, pixel_ratio, z, x, y)
         );
         """
     )
+    # Start with v5 tables; v6 adds these columns through the upstream migration.
+    if schema_version == 6:
+        for table in ("resources", "tiles"):
+            connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN must_revalidate INTEGER NOT NULL DEFAULT 0"
+            )
+    connection.execute(f"PRAGMA user_version={schema_version}")
 
     style = {
         "version": 8,
@@ -208,24 +216,40 @@ def create_cache(path: Path) -> None:
 
 
 class ExportMbtilesTests(unittest.TestCase):
+    SCHEMA_VERSION = 6
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.source = self.root / "source.db"
         self.destination = self.root / "output.mbtiles"
-        create_cache(self.source)
+        create_cache(self.source, schema_version=self.SCHEMA_VERSION)
 
     def tearDown(self):
         self.directory.cleanup()
 
     def test_exports_valid_mbtiles_and_reverses_y_axis(self):
+        source_bytes = self.source.read_bytes()
+        with closing(sqlite3.connect(self.source)) as connection:
+            self.assertEqual(
+                connection.execute("PRAGMA user_version").fetchone()[0],
+                self.SCHEMA_VERSION,
+            )
+            for table in ("resources", "tiles"):
+                columns = {
+                    row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+                }
+                self.assertEqual("must_revalidate" in columns, self.SCHEMA_VERSION == 6)
+
         summary = export_mbtiles.convert(
             self.source,
             self.destination,
             overwrite=False,
             batch_size=2,
+            quiet=True,
         )
 
+        self.assertEqual(self.source.read_bytes(), source_bytes)
         self.assertEqual(summary.source_tiles, 4)
         self.assertEqual(summary.exported_tiles, 3)
         self.assertEqual(summary.skipped_null_tiles, 1)
@@ -343,22 +367,221 @@ class ExportMbtilesTests(unittest.TestCase):
 
         self.assertEqual(self.destination.read_bytes(), b"existing")
 
-    def test_rejects_dirty_source_sidecar(self):
-        sidecar = self.source.with_name(self.source.name + "-journal")
-        sidecar.write_bytes(b"pending")
+    def test_replaces_distinct_output_when_overwrite_is_requested(self):
+        self.destination.write_bytes(b"existing output")
+        source_bytes = self.source.read_bytes()
+
+        summary = export_mbtiles.convert(
+            self.source, self.destination, overwrite=True, quiet=True
+        )
+
+        self.assertEqual(summary.exported_tiles, 3)
+        self.assertEqual(self.source.read_bytes(), source_bytes)
+        with closing(sqlite3.connect(self.destination)) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM tiles").fetchone()[0], 3
+            )
+        self.assertEqual(set(self.root.iterdir()), {self.source, self.destination})
+
+    def test_missing_source_does_not_create_files(self):
+        source = self.root / "missing #?%.db"
 
         with self.assertRaisesRegex(
-            export_mbtiles.UserFacingError, "source has a SQLite sidecar"
+            export_mbtiles.UserFacingError, "source database does not exist"
         ):
-            export_mbtiles.convert(self.source, self.destination)
+            export_mbtiles.convert(source, self.destination)
 
-        self.assertFalse(self.destination.exists())
+        self.assertEqual(set(self.root.iterdir()), {self.source})
+
+    def test_cli_rejects_source_as_output_even_with_overwrite(self):
+        source_bytes = self.source.read_bytes()
+        for overwrite in (False, True):
+            with self.subTest(overwrite=overwrite):
+                arguments = [str(self.source), str(self.source)]
+                if overwrite:
+                    arguments.append("--overwrite")
+                with redirect_stderr(io.StringIO()) as stderr:
+                    result = export_mbtiles.main(arguments)
+                self.assertEqual(result, 2)
+                self.assertIn("must refer to different files", stderr.getvalue())
+                self.assertEqual(self.source.read_bytes(), source_bytes)
+                self.assertEqual(set(self.root.iterdir()), {self.source})
+
+    def test_rejects_source_path_aliases(self):
+        source_bytes = self.source.read_bytes()
+        nested = self.root / "nested"
+        nested.mkdir()
+        symbolic = self.root / "source-symlink.db"
+        symbolic.symlink_to(self.source)
+        hard = self.root / "source-hardlink.db"
+        os.link(self.source, hard)
+        for output in (nested / ".." / self.source.name, symbolic, hard):
+            for overwrite in (False, True):
+                with self.subTest(output=output, overwrite=overwrite):
+                    with self.assertRaisesRegex(
+                        export_mbtiles.UserFacingError, "must refer to different files"
+                    ):
+                        export_mbtiles.convert(self.source, output, overwrite=overwrite)
+                    self.assertEqual(self.source.read_bytes(), source_bytes)
+                    self.assertEqual(output.read_bytes(), source_bytes)
+        self.assertTrue(symbolic.is_symlink())
+        self.assertTrue(self.source.samefile(hard))
+
+    def test_preserves_source_named_like_old_temporary_output(self):
+        source = self.source.rename(
+            self.root / f".{self.destination.name}.{os.getpid()}.tmp"
+        )
+        source_bytes = source.read_bytes()
+
+        summary = export_mbtiles.convert(source, self.destination, quiet=True)
+
+        self.assertEqual(summary.exported_tiles, 3)
+        self.assertEqual(source.read_bytes(), source_bytes)
+        self.assertEqual(set(self.root.iterdir()), {source, self.destination})
+
+    def test_exports_paths_with_uri_reserved_and_unicode_characters(self):
+        source_bytes = self.source.read_bytes()
+        names = (
+            "region#1.db",
+            "region?mode=rw&immutable=0.db",
+            "region%23.db",
+            "地图 区域.db",
+        )
+        for index, name in enumerate(names):
+            with self.subTest(name=name):
+                directory = self.root / f"区域 #?% {index}"
+                directory.mkdir()
+                source = directory / name
+                source.write_bytes(source_bytes)
+                output = directory / "地图 #?%.mbtiles"
+
+                summary = export_mbtiles.convert(source, output, quiet=True)
+
+                self.assertEqual(summary.exported_tiles, 3)
+                self.assertEqual(source.read_bytes(), source_bytes)
+                self.assertEqual(set(directory.iterdir()), {source, output})
+                with closing(sqlite3.connect(output)) as connection:
+                    blob = connection.execute(
+                        "SELECT tile_data FROM tiles WHERE zoom_level=0"
+                    ).fetchone()[0]
+                    self.assertEqual(gzip.decompress(blob), vector_tile())
+
+    def test_source_connection_rejects_writes(self):
+        source = self.source.rename(self.root / "地图 #?mode=rw%.db")
+        source_bytes = source.read_bytes()
+        with closing(export_mbtiles._open_source(source)) as connection:
+            with self.assertRaisesRegex(sqlite3.OperationalError, "readonly"):
+                connection.execute("DELETE FROM tiles")
+        self.assertEqual(source.read_bytes(), source_bytes)
+
+    def test_rejects_unsupported_versions_without_replacing_output(self):
+        self.destination.write_bytes(b"existing output")
+        for version in (0, 4, 7, 999):
+            with self.subTest(version=version):
+                with closing(sqlite3.connect(self.source)) as connection:
+                    connection.execute(f"PRAGMA user_version={version}")
+                source_bytes = self.source.read_bytes()
+
+                with self.assertRaisesRegex(
+                    export_mbtiles.UserFacingError, f"unsupported .* schema version: {version}"
+                ):
+                    export_mbtiles.convert(self.source, self.destination, overwrite=True)
+
+                self.assertEqual(self.source.read_bytes(), source_bytes)
+                self.assertEqual(self.destination.read_bytes(), b"existing output")
+                self.assertEqual(set(self.root.iterdir()), {self.source, self.destination})
+
+    def test_rejects_missing_tables_without_replacing_output(self):
+        self.destination.write_bytes(b"existing output")
+        original = self.source.read_bytes()
+        for table in ("regions", "resources", "tiles"):
+            with self.subTest(table=table):
+                self.source.write_bytes(original)
+                with closing(sqlite3.connect(self.source)) as connection:
+                    connection.execute(f"DROP TABLE {table}")
+                source_bytes = self.source.read_bytes()
+
+                with self.assertRaisesRegex(
+                    export_mbtiles.UserFacingError, f"missing tables: {table}"
+                ):
+                    export_mbtiles.convert(self.source, self.destination, overwrite=True)
+
+                self.assertEqual(self.source.read_bytes(), source_bytes)
+                self.assertEqual(self.destination.read_bytes(), b"existing output")
+                self.assertEqual(set(self.root.iterdir()), {self.source, self.destination})
+
+    def test_rejects_missing_columns_without_replacing_output(self):
+        self.destination.write_bytes(b"existing output")
+        original = self.source.read_bytes()
+        for table, column in (
+            ("regions", "definition"),
+            ("resources", "compressed"),
+            ("tiles", "z"),
+            ("tiles", "data"),
+        ):
+            with self.subTest(table=table, column=column):
+                self.source.write_bytes(original)
+                with closing(sqlite3.connect(self.source)) as connection:
+                    connection.execute(
+                        f"ALTER TABLE {table} RENAME COLUMN {column} TO unexpected_column"
+                    )
+                source_bytes = self.source.read_bytes()
+
+                with self.assertRaisesRegex(
+                    export_mbtiles.UserFacingError,
+                    f"source table {table} is missing required columns: {column}",
+                ):
+                    export_mbtiles.convert(self.source, self.destination, overwrite=True)
+
+                self.assertEqual(self.source.read_bytes(), source_bytes)
+                self.assertEqual(self.destination.read_bytes(), b"existing output")
+                self.assertEqual(set(self.root.iterdir()), {self.source, self.destination})
+
+    def test_cleans_temporary_output_after_conversion_failure(self):
+        self.destination.write_bytes(b"existing output")
+        with closing(sqlite3.connect(self.source)) as connection:
+            connection.execute(
+                """INSERT INTO tiles(url_template,pixel_ratio,z,x,y,data,compressed,accessed)
+                   SELECT 'second-source',pixel_ratio,z,x,y,data,compressed,accessed
+                   FROM tiles WHERE z=0"""
+            )
+            connection.commit()
+        source_bytes = self.source.read_bytes()
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            export_mbtiles.convert(self.source, self.destination, overwrite=True, quiet=True)
+
+        self.assertEqual(self.source.read_bytes(), source_bytes)
+        self.assertEqual(self.destination.read_bytes(), b"existing output")
+        self.assertEqual(set(self.root.iterdir()), {self.source, self.destination})
+
+    def test_rejects_dirty_source_sidecar(self):
+        source_bytes = self.source.read_bytes()
+        for suffix in ("-journal", "-wal", "-shm"):
+            with self.subTest(suffix=suffix):
+                sidecar = self.source.with_name(self.source.name + suffix)
+                sidecar.write_bytes(b"pending")
+
+                with self.assertRaisesRegex(
+                    export_mbtiles.UserFacingError, "source has a SQLite sidecar"
+                ):
+                    export_mbtiles.convert(self.source, self.destination)
+
+                self.assertFalse(self.destination.exists())
+                self.assertEqual(self.source.read_bytes(), source_bytes)
+                self.assertEqual(sidecar.read_bytes(), b"pending")
+                sidecar.unlink()
 
     def test_cli_help_does_not_require_database(self):
-        with self.assertRaises(SystemExit) as raised:
-            export_mbtiles.main(["--help"])
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as raised:
+                export_mbtiles.main(["--help"])
 
         self.assertEqual(raised.exception.code, 0)
+
+
+class ExportMbtilesV5Tests(ExportMbtilesTests):
+    SCHEMA_VERSION = 5
 
 
 if __name__ == "__main__":

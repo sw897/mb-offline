@@ -200,14 +200,34 @@ a source without adding source detail.
 python3 scripts/export_mbtiles.py data/map.db data/map.mbtiles
 ```
 
-源文件必须是 Mapbox GL Native schema-v6 离线缓存，且不能带有 `-journal`、`-wal` 或 `-shm` 旁文件。导出前应先安全恢复被中断的 SQLite 数据库，请勿通过删除旁文件强行转换。源文件以只读、immutable 模式打开，目标文件先在临时数据库中生成，再通过原子替换就位。仅在确定替换已有目标时使用 `--overwrite`。
+导出器支持 Mapbox GL Native schema-v5 和 schema-v6 离线缓存，会检查 `PRAGMA user_version`、必需表及导出所需字段，拒绝其他版本或结构不兼容的数据库。v6 相比 v5 仅在 `resources`、`tiles` 表新增 `must_revalidate` 字段，导出过程不使用该字段，因此无需升级或修改 v5 源库。
 
-The source must be a Mapbox GL Native schema-v6 offline cache without a
-`-journal`, `-wal` or `-shm` sidecar. Safely recover an interrupted SQLite
-database before exporting; do not delete a sidecar to force conversion.
-The source is opened read-only and immutable. The destination is built in a
-temporary database and atomically installed; use `--overwrite` only when
-replacing an existing destination is intended.
+The exporter supports Mapbox GL Native schema-v5 and schema-v6 offline caches.
+It checks `PRAGMA user_version`, required tables and columns needed for export,
+and rejects other versions or incompatible structures. Compared with v5, v6
+only adds `must_revalidate` to `resources` and `tiles`. Export does not use
+that field, so a v5 source does not need to be upgraded or modified.
+
+导出前必须停止源库写入，且源文件不能带有 `-journal`、`-wal` 或 `-shm` 旁文件。应先安全恢复被中断的 SQLite 数据库，请勿通过删除旁文件强行转换。源文件以只读、immutable 模式打开；目标文件在目标目录下独立的临时目录中生成，通过原子替换就位，成功或失败后均会清理本次临时输出。
+
+Stop source writers before exporting. The source must have no `-journal`,
+`-wal` or `-shm` sidecar. Safely recover an interrupted SQLite database first;
+do not delete a sidecar to force conversion. The source is opened read-only
+and immutable. Output is built in a unique temporary directory within the
+destination directory and atomically installed. Temporary output from this
+run is cleaned up on success or failure.
+
+输入和输出必须指向不同文件。相同路径、等价路径、符号链接或硬链接指向同一文件时，即使使用 `--overwrite` 也会被拒绝。仅在确定替换另一个已有目标文件时使用 `--overwrite`。SQLite URI 会正确编码路径中的空格、中文及 `#`、`?`、`%` 等字符；在命令中仍应给路径加引号，例如：
+
+Input and output must refer to different files. Identical or equivalent paths,
+symbolic links and hard links that refer to the same file are rejected even
+with `--overwrite`. Use that flag only when replacing a distinct existing
+destination is intended. SQLite URI paths correctly encode spaces, Unicode
+and characters such as `#`, `?` and `%`; still quote paths in shell commands:
+
+```sh
+python3 scripts/export_mbtiles.py "data/区域 #1.db" "data/区域 #1.mbtiles"
+```
 
 导出器将 XYZ 的 `y` 坐标翻转为 MBTiles 的 TMS 行号，跳过空瓦片记录，写入 gzip 压缩的 PBF，并推导边界、层级和矢量图层元数据。跨数据源或像素比的重复坐标，以及无效瓦片载荷会被拒绝。标准 MBTiles 坐标查询使用唯一索引。
 

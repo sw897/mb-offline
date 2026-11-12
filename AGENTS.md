@@ -15,7 +15,7 @@ switching pages. Do not create case-only duplicates such as
 mb-offline packages the frozen Mapbox GL Native `mbgl-offline` CLI in Docker.
 The host-side Python download wrapper validates regions, estimates a spatial
 tile grid, handles credentials and invokes the container. The exporter converts
-schema-v6 cache tiles to MBTiles 1.3. Both host tools use only the Python 3.9+
+schema-v5/v6 cache tiles to MBTiles 1.3. Both host tools use only the Python 3.9+
 standard library.
 
 Implement the supported bounded download/export workflow. A new renderer,
@@ -105,9 +105,23 @@ Direct native-cache queries use XYZ. A `compressed=1` tile has a zlib-wrapped
 DEFLATE stream, not an HTTP gzip stream. The exporter repacks it as gzip and
 flips XYZ y to TMS. MBTiles uses a unique three-coordinate index.
 
-The exporter opens the source read-only/immutable, rejects SQLite sidecars,
-validates supported schema/payloads, skips null records and creates output
-through a temporary database with atomic replacement. Exported tiles/metadata
+The exporter accepts Mapbox GL Native schema versions 5 and 6. Validate
+`PRAGMA user_version`, the required `regions`/`resources`/`tiles` tables and
+the columns needed for export. The v5-to-v6 migration only adds
+`must_revalidate` to `resources` and `tiles`; export does not read that field
+or upgrade the source. Test both actual table layouts, not just changed
+version numbers. Reject other versions and incompatible structures.
+
+Open the source read-only/immutable using an escaped `Path.as_uri()` URI;
+never interpolate a raw path into `file:`. Reject SQLite sidecars and
+source/output aliases, including symbolic and hard links, before writing.
+`--overwrite` permits replacing a distinct destination, never the source.
+Build output in a unique temporary directory beside the destination, clean
+up that owned staging directory on success/failure and atomically replace
+the destination only after validation. Do not delete a predictable temporary
+path that might be an existing source or another user's file.
+
+The exporter validates payloads and skips null records. Exported tiles/metadata
 do not include an offline style, sprites or glyphs. Do not weaken these
 contracts or claim compatibility with arbitrary old/merged databases.
 

@@ -122,11 +122,20 @@ if any(Path(str(source) + suffix).exists() for suffix in ("-journal", "-wal", "-
     raise SystemExit("SQLite sidecar present; preserve it and recover safely first")
 with closing(sqlite3.connect(source.as_uri() + "?mode=ro&immutable=1", uri=True)) as db:
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version != 6:
-        raise SystemExit("Expected a Mapbox GL Native schema-v6 cache")
+    if version not in (5, 6):
+        raise SystemExit("Expected a Mapbox GL Native schema-v5/v6 cache")
+    required_columns = {
+        "regions": {"id", "definition"},
+        "resources": {"id", "kind", "data", "compressed"},
+        "tiles": {"z", "x", "y", "data", "compressed"},
+    }
     tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    if not {"regions", "resources", "tiles"}.issubset(tables):
+    if not required_columns.keys() <= tables:
         raise SystemExit("Required native-cache tables are missing")
+    for table, required in required_columns.items():
+        columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
+        if not required <= columns:
+            raise SystemExit(f"Required native-cache columns are missing in {table}")
     count, payloads, low, high = db.execute(
         "SELECT COUNT(*), SUM(data IS NOT NULL), MIN(z), MAX(z) FROM tiles"
     ).fetchone()
@@ -150,14 +159,22 @@ authorized recovery plan.
 
 ## Export and explain compatibility
 
-For a supported, quiescent source with no SQLite sidecars:
+For a schema-v5/v6 source with compatible tables/columns, no active writer and
+no SQLite sidecars:
 
 ```sh
 python3 scripts/export_mbtiles.py data/map.db data/map.mbtiles
 ```
 
-The exporter reads the source without modifying it and installs the destination
-through a temporary database. Use a new output unless replacement is authorized.
+The exporter checks the schema version and required columns, reads the source
+without modifying it and installs the destination through a unique temporary
+directory with atomic replacement. The v6-only `must_revalidate` columns are
+not needed for export; do not migrate a v5 source merely to convert its tiles.
+Use a new output unless replacing a distinct existing destination is authorized.
+Identical paths, symbolic links and hard links to the source are rejected even
+with `--overwrite`. Quote paths containing spaces or URI-reserved characters;
+the exporter encodes SQLite URI paths, including `#`, `?` and `%`.
+
 Its output uses TMS rows and gzip PBF. Direct native-cache queries use XYZ and
 `compressed=1` data is zlib-wrapped, not already HTTP gzip.
 

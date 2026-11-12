@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserve source caches when export paths alias the same file, and encode
+  special characters in read-only SQLite URIs. Use unique temporary staging
+  directories to avoid deleting existing files.
+- Support schema-v5/v6 exports with explicit version/column checks and offline
+  regression tests for both layouts, source preservation and output cleanup.
 - Add a distributable Agent skill for bounded downloads, read-only cache
   inspection and MBTiles export, with offline-verified operation recipes.
 - Default the download wrapper and runtime checks to `mbgl-offline` (`:latest`),

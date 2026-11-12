@@ -92,15 +92,21 @@ rights. Preserve the user's bounded scope and applicable account agreement.
 
 ## Inspect or export a cache
 
-- Native output is a schema-v6 SQLite cache, not MBTiles. Stop writers before
-  inspecting or exporting it. Use read-only, immutable inspection and reject
-  `-journal`, `-wal` or `-shm` sidecars; do not delete them to force an export.
-- Verify the schema and required tables. The inspection recipe explicitly
-  checks `PRAGMA user_version`; do not infer compatibility from a `.db` suffix
-  or from an exporter being able to open tables with familiar names.
-- Export through `scripts/export_mbtiles.py` to a separate destination. Retain
-  the source and let the exporter perform XYZ-to-TMS conversion and zlib-to-gzip
-  repacking. Renaming a native cache does not convert it to MBTiles.
+- Current downloads create schema-v6 SQLite caches, not MBTiles. The exporter
+  supports schema-v5 and schema-v6 without upgrading or modifying the source.
+  Stop writers before inspection/export. Use read-only, immutable inspection
+  and reject `-journal`, `-wal` or `-shm` sidecars; do not delete them to force
+  an export.
+- Verify `PRAGMA user_version` is 5 or 6, required tables and export columns.
+  The v6-only `must_revalidate` field is not needed for export; do not reject
+  v5 for lacking it. Other versions and incompatible structures are rejected.
+  A `.db` suffix or familiar table names alone do not establish compatibility.
+- Export through `scripts/export_mbtiles.py` to a distinct file, including
+  when paths involve symbolic or hard links. `--overwrite` never authorizes
+  replacing the source. Keep shell paths quoted; read-only inspection must
+  use `Path.as_uri()` rather than interpolating raw paths into a SQLite URI.
+  Let the exporter perform XYZ-to-TMS conversion and zlib-to-gzip repacking.
+  Renaming a native cache does not convert it to MBTiles.
 - Duplicate XYZ coordinates across source templates/pixel ratios are ambiguous
   for this exporter. Preserve the cache and explain the source conflict; do not
   drop rows or arbitrarily choose a source to make conversion pass.

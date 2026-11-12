@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Convert a Mapbox GL Native offline cache to an MBTiles 1.3 file."""
+"""Convert Mapbox GL Native schema-v5/v6 cache tiles to MBTiles 1.3."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import math
 import os
 import sqlite3
 import sys
+import tempfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -129,23 +130,45 @@ def _open_source(source: Path) -> sqlite3.Connection:
             )
 
     connection = sqlite3.connect(
-        f"file:{source.resolve()}?mode=ro&immutable=1",
+        source.resolve().as_uri() + "?mode=ro&immutable=1",
         uri=True,
     )
-    required_tables = {"regions", "resources", "tiles"}
-    tables = {
-        row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
+    required_columns = {
+        "regions": {"id", "definition"},
+        "resources": {"id", "kind", "data", "compressed"},
+        "tiles": {"z", "x", "y", "data", "compressed"},
     }
-    missing = sorted(required_tables - tables)
-    if missing:
+    try:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version not in (5, 6):
+            raise UserFacingError(
+                f"unsupported Mapbox GL Native schema version: {version}; expected 5 or 6"
+            )
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        missing = sorted(required_columns.keys() - tables)
+        if missing:
+            raise UserFacingError(
+                "source is not a Mapbox GL Native cache; missing tables: "
+                + ", ".join(missing)
+            )
+        for table, required in required_columns.items():
+            columns = {
+                row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            missing = sorted(required - columns)
+            if missing:
+                raise UserFacingError(
+                    f"source table {table} is missing required columns: "
+                    + ", ".join(missing)
+                )
+    except Exception:
         connection.close()
-        raise UserFacingError(
-            "source is not a Mapbox GL Native cache; missing tables: "
-            + ", ".join(missing)
-        )
+        raise
     return connection
 
 
@@ -417,6 +440,10 @@ def convert(
     destination = destination.expanduser().resolve()
     if not source.is_file():
         raise UserFacingError(f"source database does not exist: {source}")
+    if source == destination or (
+        destination.exists() and source.samefile(destination)
+    ):
+        raise UserFacingError("source and output must refer to different files")
     if destination.exists() and not overwrite:
         raise UserFacingError(f"output already exists: {destination}; use --overwrite")
     if not 1 <= batch_size <= 10000:
@@ -424,15 +451,9 @@ def convert(
     if page_size not in (512, 1024, 2048, 4096, 8192, 16384, 32768, 65536):
         raise UserFacingError("page size must be a valid SQLite page size")
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(
-        f".{destination.name}.{os.getpid()}.tmp"
-    )
-    if temporary.exists():
-        temporary.unlink()
-
     source_connection = _open_source(source)
     target_connection: Optional[sqlite3.Connection] = None
+    staging: Optional[tempfile.TemporaryDirectory] = None
     exported = 0
     skipped_null = 0
     repacked = 0
@@ -443,6 +464,11 @@ def convert(
     try:
         style = _load_json_resource(source_connection, 1)
         tilejson = _load_json_resource(source_connection, 2)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        staging = tempfile.TemporaryDirectory(
+            prefix=f".{destination.name}.", dir=destination.parent
+        )
+        temporary = Path(staging.name) / "tiles.mbtiles"
         target_connection = _create_target(temporary, page_size)
 
         cursor = source_connection.execute(
@@ -514,13 +540,12 @@ def convert(
         target_connection.close()
         target_connection = None
         os.replace(temporary, destination)
-    except Exception:
+    finally:
         if target_connection is not None:
             target_connection.close()
-        temporary.unlink(missing_ok=True)
-        raise
-    finally:
         source_connection.close()
+        if staging is not None:
+            staging.cleanup()
 
     return ExportSummary(
         source_tiles=exported + skipped_null,
@@ -534,9 +559,11 @@ def convert(
 
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Convert a Mapbox GL Native offline cache database to MBTiles 1.3."
+        description="Convert a Mapbox GL Native schema-v5/v6 offline cache to MBTiles 1.3."
     )
-    parser.add_argument("source", type=Path, help="Mapbox GL Native cache database")
+    parser.add_argument(
+        "source", type=Path, help="Mapbox GL Native schema-v5/v6 cache database"
+    )
     parser.add_argument("output", type=Path, help="destination .mbtiles file")
     parser.add_argument("--overwrite", action="store_true", help="replace an existing output")
     parser.add_argument("--batch-size", type=int, default=1000)
