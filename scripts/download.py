@@ -426,7 +426,9 @@ def create_parser() -> argparse.ArgumentParser:
         help="Mapbox style URL",
     )
     parser.add_argument("--output", type=Path, default=Path("offline.db"), help="output database")
-    parser.add_argument("--image", default="mbgl-offline:2.0", help="mbgl-offline Docker image")
+    parser.add_argument(
+        "--image", default="mbgl-offline", help="mbgl-offline Docker image (default: %(default)s)"
+    )
     parser.add_argument("--pixel-ratio", type=positive_float, default=1.0)
     parser.add_argument(
         "--include-ideographs",

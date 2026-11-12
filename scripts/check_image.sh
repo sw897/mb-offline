@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 set -eu
 
-image_name=${1:-mbgl-offline:2.0}
+image_name=${1:-mbgl-offline}
 
 docker run --rm --network none "$image_name" --help > /dev/null
 docker run --rm --network none --entrypoint /bin/sh "$image_name" -ec '

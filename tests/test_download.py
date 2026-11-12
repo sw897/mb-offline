@@ -80,7 +80,7 @@ class DownloadScriptTests(unittest.TestCase):
             max_zoom=12,
             style="mapbox://styles/mapbox/streets-v11",
             output=Path("map.db"),
-            image="mbgl-offline:2.0",
+            image="mbgl-offline",
             pixel_ratio=1.0,
             include_ideographs=False,
             api_base_url=None,

@@ -4,7 +4,10 @@
 
 `AGENTS.md` is the sole project guide for development agents. Keep it current
 when commands, defaults, storage contracts or architecture change. README.md
-documents the public user workflow. Do not create case-only duplicates such as
+documents the public user workflow in Chinese and English in the same file.
+Synchronize English prose from the user's manually edited Chinese text. Keep
+both languages aligned and share command examples; do not add language
+switching pages. Do not create case-only duplicates such as
 `agents.md`, which collide with this file on case-insensitive filesystems.
 
 ## Project and scope
@@ -44,6 +47,8 @@ advertise wrapper-managed scheduling, resume or full resource validation.
 - The runtime user is `65532:65532`. The POSIX wrapper maps the caller's
   UID/GID for writable output mounts. Direct Docker examples must account
   for bind-mount permissions.
+- The download wrapper and image check default to `mbgl-offline`
+  (`mbgl-offline:latest`). Explicit image overrides remain supported.
 - Never put Mapbox tokens in image arguments, layers, labels or metadata.
 
 ## Validation
