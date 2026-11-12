@@ -267,6 +267,25 @@ it as gzip. The MBTiles exporter already performs the required repacking.
   Tile data, glyphs, styles and credentials must not be committed to this
   repository or bundled in its public releases.
 
+## Agent 技能 / Agent skill
+
+仓库在 [skills/mb-offline/SKILL.md](skills/mb-offline/SKILL.md) 提供可复用的 Agent 技能，覆盖区域估算、镜像准备、授权范围内的下载、缓存检查和 MBTiles 导出。技能使用当前检出的项目命令，并要求核对本地镜像的实际上限。
+
+A reusable Agent skill is provided in
+[skills/mb-offline/SKILL.md](skills/mb-offline/SKILL.md) for region estimates,
+image preparation, authorized downloads, cache inspection and MBTiles export.
+It uses the current checkout's commands and checks the selected image's actual
+tile limit.
+
+可将整个 `skills/mb-offline/` 目录安装到 Agent 支持的技能目录，也可以让 Agent 直接读取技能入口。安装副本仍需定位本项目的检出目录；宿主机工具需要 Python，原生下载需要 Docker，访问 Mapbox 资源时再提供本地凭据。示例请求：“使用 `$mb-offline` 先估算指定区域，再按已授权的范围执行下载或导出。”
+
+Install the complete `skills/mb-offline/` directory through the Agent's skill
+mechanism, or ask the Agent to read the entrypoint directly. An installed copy
+still needs a checkout of this project, Python, Docker for native downloads,
+and local credentials when the operation requires them. Example request:
+“Use `$mb-offline` to estimate the specified region, then carry out the
+authorized download or export.”
+
 ## 验证与 CI / Validation and CI
 
 ```sh

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a distributable Agent skill for bounded downloads, read-only cache
+  inspection and MBTiles export, with offline-verified operation recipes.
 - Default the download wrapper and runtime checks to `mbgl-offline` (`:latest`),
   matching the documented build image name.
 - Prepare the local project for open-source publication under Apache-2.0,

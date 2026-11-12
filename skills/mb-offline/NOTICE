@@ -1,0 +1,20 @@
+mb-offline
+Copyright 2026 mb-offline contributors
+
+The original code, documentation and build changes in this project are
+licensed under the Apache License, Version 2.0. See LICENSE.
+
+The Docker image includes Mapbox GL Native, copyright 2014-2020 Mapbox,
+and other third-party software under their own licenses. The project's
+Apache-2.0 license does not replace those licenses. See
+THIRD_PARTY_NOTICES.md and licenses/mapbox-gl-native/.
+
+The supplied historical Docker recipe closely resembles the
+snodnipper/whalebrew-mbgl-offline and
+OrdnanceSurvey/whalebrew-mbgl-offline recipes. The OrdnanceSurvey repository
+is licensed under Apache-2.0. These projects are acknowledged as likely
+historical references; the direct copying history has not been established.
+
+This project is independent of Mapbox and Ordnance Survey. Software
+licensing does not grant access to, or redistribution rights for, Mapbox
+hosted data, styles, sprites or fonts.

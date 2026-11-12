@@ -1,0 +1,4 @@
+interface:
+  display_name: "mb-offline"
+  short_description: "Estimate bounded vector-tile downloads and export MBTiles"
+  default_prompt: "Use $mb-offline to estimate a requested region, inspect the selected image, and perform the authorized download or MBTiles export."

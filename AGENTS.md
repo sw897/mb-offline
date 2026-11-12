@@ -113,6 +113,14 @@ contracts or claim compatibility with arbitrary old/merged databases.
 
 ## Licensing and provenance
 
+The distributable Agent skill lives in `skills/mb-offline/`. Its SKILL.md holds
+operational decisions and references/operations.md supplies optional recipes.
+Keep it aligned with the actual CLI; do not add credentials, machine-specific
+paths or assumptions about local image aliases. Verify examples offline and
+preserve authorization and source-database boundaries. Skill installation or
+personal asset-library deployment is separate from editing this repository.
+Keep the skill package's LICENSE and NOTICE copies aligned with the root files.
+
 Original project contributions use Apache-2.0. Preserve LICENSE, NOTICE and
 THIRD_PARTY_NOTICES.md in source distributions and images. The fixed native
 upstream's BSD license and aggregate notices are stored verbatim in
