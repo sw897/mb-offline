@@ -5,6 +5,8 @@ set -eu
 image_name=${1:-mbgl-offline}
 
 docker run --rm --network none "$image_name" --help > /dev/null
+# Put the value before --help so the native parser must accept it first.
+docker run --rm --network none "$image_name" --includeIdeographs=1 --help > /dev/null
 docker run --rm --network none --entrypoint /bin/sh "$image_name" -ec '
     test "$(id -u)" -ne 0
     test -w /workdir

@@ -102,6 +102,8 @@ def estimate_bbox_tiles(
     bounds: tuple[float, float, float, float],
     min_zoom: int,
     max_zoom: int,
+    *,
+    include_max_edges: bool = False,
 ) -> TileEstimate:
     west, south, east, north = bounds
     by_zoom: dict[int, int] = {}
@@ -109,9 +111,22 @@ def estimate_bbox_tiles(
     for zoom in range(min_zoom, max_zoom + 1):
         size = 1 << zoom
         x_start = min(max(_tile_x(west, zoom), 0), size - 1)
-        x_end = min(max(_last_index((east + 180.0) / 360.0 * size), 0), size - 1)
+        # Geometry endpoints can lie on, or collapse onto, the east/south edge.
+        # Include those endpoint cells for a conservative GeoJSON estimate;
+        # ordinary area bounds keep their existing half-open maximum edges.
+        x_end = (
+            _tile_x(east, zoom)
+            if include_max_edges
+            else _last_index((east + 180.0) / 360.0 * size)
+        )
+        x_end = min(max(x_end, 0), size - 1)
         y_start = min(max(_tile_y(north, zoom), 0), size - 1)
-        y_end = min(max(_last_index(_raw_tile_y(south, zoom)), 0), size - 1)
+        y_end = (
+            _tile_y(south, zoom)
+            if include_max_edges
+            else _last_index(_raw_tile_y(south, zoom))
+        )
+        y_end = min(max(y_end, 0), size - 1)
         by_zoom[zoom] = (x_end - x_start + 1) * (y_end - y_start + 1)
 
     return TileEstimate(
@@ -131,7 +146,9 @@ def _raw_tile_y(latitude: float, zoom: int) -> float:
 
 
 def _coordinates(node: object) -> Iterator[tuple[float, float]]:
-    if not isinstance(node, list) or not node:
+    if not isinstance(node, list):
+        raise ValueError("GeoJSON coordinates must be arrays")
+    if not node:
         return
 
     if all(not isinstance(item, list) for item in node):
@@ -150,6 +167,36 @@ def _coordinates(node: object) -> Iterator[tuple[float, float]]:
 
     for child in node:
         yield from _coordinates(child)
+
+
+def _geometry_coordinates(geometry: object) -> Iterator[tuple[float, float]]:
+    if not isinstance(geometry, dict):
+        raise ValueError("GeoJSON geometry must be an object")
+
+    kind = geometry.get("type")
+    if not isinstance(kind, str):
+        raise ValueError("GeoJSON geometry type must be a string")
+    if kind == "GeometryCollection":
+        children = geometry.get("geometries")
+        if not isinstance(children, list):
+            raise ValueError("GeometryCollection.geometries must be an array")
+        for child in children:
+            yield from _geometry_coordinates(child)
+        return
+
+    if kind not in {
+        "Point",
+        "MultiPoint",
+        "LineString",
+        "MultiLineString",
+        "Polygon",
+        "MultiPolygon",
+    }:
+        raise ValueError(f"unsupported GeoJSON geometry type: {kind}")
+    coordinates = geometry.get("coordinates")
+    if not isinstance(coordinates, list):
+        raise ValueError(f"GeoJSON {kind}.coordinates must be an array")
+    yield from _coordinates(coordinates)
 
 
 def load_geojson_bounds(path: Path) -> tuple[float, float, float, float]:
@@ -177,33 +224,11 @@ def load_geojson_bounds(path: Path) -> tuple[float, float, float, float]:
     else:
         geometry = document
 
-    allowed = {
-        "Point",
-        "MultiPoint",
-        "LineString",
-        "MultiLineString",
-        "Polygon",
-        "MultiPolygon",
-        "GeometryCollection",
-    }
-    if not isinstance(geometry, dict) or geometry.get("type") not in allowed:
-        raise ValueError("GeoJSON input must be one geometry or one Feature")
-
-    nodes: list[object] = []
-    if geometry.get("type") == "GeometryCollection":
-        nested = geometry.get("geometries")
-        if not isinstance(nested, list):
-            raise ValueError("GeometryCollection.geometries must be an array")
-        nodes.extend(nested)
-    else:
-        nodes.append(geometry.get("coordinates"))
-
     longitudes: list[float] = []
     latitudes: list[float] = []
-    for node in nodes:
-        for longitude, latitude in _coordinates(node):
-            longitudes.append(longitude)
-            latitudes.append(latitude)
+    for longitude, latitude in _geometry_coordinates(geometry):
+        longitudes.append(longitude)
+        latitudes.append(latitude)
 
     if not longitudes:
         raise ValueError("GeoJSON input contains no coordinates")
@@ -321,7 +346,7 @@ def build_docker_command(
         raise ValueError("download configuration needs either a bbox or GeoJSON input")
 
     if config.include_ideographs:
-        command.append("--includeIdeographs=true")
+        command.append("--includeIdeographs=1")
     if config.api_base_url:
         command.append(f"--apiBaseURL={config.api_base_url}")
 
@@ -463,7 +488,9 @@ def run(args: argparse.Namespace) -> int:
     else:
         geojson = args.geojson.expanduser().resolve()
         bounds = load_geojson_bounds(geojson)
-        estimate = estimate_bbox_tiles(bounds, args.min_zoom, args.max_zoom)
+        estimate = estimate_bbox_tiles(
+            bounds, args.min_zoom, args.max_zoom, include_max_edges=True
+        )
         estimate = TileEstimate(
             total=estimate.total,
             by_zoom=estimate.by_zoom,

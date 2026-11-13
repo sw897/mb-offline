@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Pass the numeric CJK glyph flag expected by the native CLI, with a
+  network-disabled parser smoke check.
+- Traverse nested GeoJSON GeometryCollections and reject invalid members.
+  Include geometry endpoint cells in conservative estimates so boundary
+  points/lines are not reported as zero; preserve existing bbox counts.
 - Preserve source caches when export paths alias the same file, and encode
   special characters in read-only SQLite URIs. Use unique temporary staging
   directories to avoid deleting existing files.

@@ -65,7 +65,9 @@ sh scripts/check_image.sh mbgl-offline:check
 
 The image check runs with networking disabled. It checks help, dynamic library
 resolution, non-root defaults, writable mounts, included notices and absence of
-build tools. Run `actionlint` when changing the workflow, if installed.
+build tools. It also parses `--includeIdeographs=1` before `--help` to verify
+the pinned CLI's numeric boolean contract without downloading resources.
+Run `actionlint` when changing the workflow, if installed.
 
 CI uses pinned action commits, read-only repository permissions, Python 3.9/3.14
 and native amd64/arm64 Linux runners. It builds and checks images locally on the
@@ -92,6 +94,22 @@ requires public source and package downloads.
 - Keep databases, SQLite sidecars, MBTiles/PMTiles, tile payloads, caches and
   credentials out of Git. Preserve deterministic tile math and output behavior.
   The historical Beijing z11-z16 grid estimate is 197321 cells.
+
+## Download input contracts
+
+- GeoJSON accepts a single Feature or geometry, including recursively nested
+  GeometryCollections. Visit every member and validate geometry types and
+  coordinate arrays/ranges. Reject invalid members instead of skipping them;
+  keep FeatureCollection unsupported and reject inputs with no coordinates.
+- Ordinary bbox grid estimates retain half-open east/south maximum edges.
+  GeoJSON bounding-box upper bounds include the endpoint cells on those edges
+  so points and lines cannot collapse to a zero-cell estimate. Clamp indices
+  to the valid tile grid, including at world boundaries. Keep the historical
+  Beijing bbox estimate unchanged.
+- The wrapper's `--include-ideographs` maps to native `--includeIdeographs=1`.
+  The frozen native parser rejects the string `true`; omitting the wrapper
+  flag preserves the native default. Keep unit tests for command translation
+  and the token-free, network-disabled native parser check aligned.
 
 ## Storage contracts
 

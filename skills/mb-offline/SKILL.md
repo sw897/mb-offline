@@ -50,10 +50,18 @@ implementation contract.
    outputs or choose an unused destination instead.
 
 The wrapper takes `--min-zoom`/`--max-zoom`, not the native CLI's camel-case
-flags. It accepts one GeoJSON Feature or geometry and rejects FeatureCollection.
-Do not silently select the first feature or discard the rest. Its bbox does
-not cross the antimeridian and its integer zoom range is 0-22. Source detail
-can stop before the requested maximum zoom.
+flags. It accepts one GeoJSON Feature or geometry, including recursively
+nested GeometryCollections, and rejects FeatureCollection and invalid
+collection members. Do not silently select a feature or discard members.
+GeoJSON estimates include maximum-edge endpoint cells so points and lines
+on tile boundaries are not reported as zero. They remain conservative bbox
+upper bounds. Ordinary bbox estimates retain their
+boundary rules. Bboxes do not cross the antimeridian and integer zooms are
+0-22. Source detail can stop before the requested maximum zoom.
+
+For CJK glyph resources, use the wrapper's `--include-ideographs` in both
+preview and download. Extra glyph requests are not counted by the spatial
+tile-grid estimate; the optional recipe explains native CLI compatibility.
 
 ## Use credentials and control the run
 

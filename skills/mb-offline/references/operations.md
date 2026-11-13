@@ -94,6 +94,31 @@ only for the already authorized download. Wrapper confirmation, source HTTP
 retries and resuming a partial cache are different things: no resume option is
 implemented. `--overwrite` deletes the selected output and its SQLite sidecars.
 
+Single geometries and Features containing nested GeometryCollections are
+supported. All geometry members contribute to the bounds; invalid members
+are rejected instead of skipped. FeatureCollection remains unsupported.
+Point and line estimates include cells at maximum boundary endpoints; for
+example, a Point at `[0, 0]` counts one cell at each of z11 and z12. GeoJSON
+uses a conservative bbox upper bound, while ordinary bbox estimates keep
+their existing maximum-edge rules.
+
+When CJK glyph resources are requested, keep `--include-ideographs` in both
+preview and actual commands. This preview still requires no token or Docker:
+
+```sh
+python3 scripts/download.py \
+  --bbox 116.38,39.90,116.42,39.94 \
+  --min-zoom 11 --max-zoom 12 \
+  --include-ideographs \
+  --output data/map-cjk.db \
+  --dry-run
+```
+
+The wrapper sends native `--includeIdeographs=1`; the frozen native parser
+rejects `--includeIdeographs=true`. Use the wrapper flag for normal operation.
+Extra glyph resources do not change the four-cell spatial estimate in this
+example.
+
 HTTP 401/403 or a tile-limit error can leave the native event loop running.
 Send SIGINT through the owned job/session handle, preserve partial output and
 report the terminal error. Do not interpret file growth as completion or

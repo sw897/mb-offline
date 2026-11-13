@@ -180,19 +180,52 @@ python3 scripts/download.py \
   --dry-run
 ```
 
-下载脚本接受单个 Feature 或 geometry，不接受 FeatureCollection，并使用其包围盒进行估算；原生下载器按实际几何区域处理。移除 `--dry-run` 后即可进行需要确认的下载。其他选项包括 `--style`、`--pixel-ratio`、`--include-ideographs`、`--image` 和 `--api-base-url`；完整说明见 `python3 scripts/download.py --help`。
+下载脚本接受单个 Feature 或 geometry，支持点、线、面及递归嵌套的 GeometryCollection，不接受 FeatureCollection。集合中的每个几何成员都会参与包围盒计算；不支持的几何类型、缺失的坐标数组或越界坐标会报错，不会跳过该成员。原生下载器仍按原始几何区域处理。
 
-The wrapper accepts a single Feature or geometry, rejects FeatureCollection,
-and estimates its bounding box. The native downloader applies the geometry.
+The wrapper accepts a single Feature or geometry, including points, lines,
+polygons and recursively nested GeometryCollections. It rejects
+FeatureCollection. Every geometry member contributes to the bounding box;
+unsupported geometry types, missing coordinate arrays and out-of-range
+coordinates are rejected rather than skipped. The native downloader still
+applies the original geometry.
+
+GeoJSON 使用包围盒上界估算，并计入东侧和南侧边界上端点所在的网格，避免点或线落在瓦片边界时被估算为 0。例如 `Point(0,0)` 在 z11–12 每层各计 1 个网格，共 2 个。该上界可能高于相同范围的普通 bbox 估算；普通 bbox 保持原来的边界规则。
+
+GeoJSON uses a bounding-box upper bound that includes cells containing
+endpoints on its east and south edges, so points or lines on tile boundaries
+are not estimated as zero. For example, `Point(0,0)` counts one cell at each
+of z11 and z12, two in total. This upper bound can exceed the estimate for an
+equivalent area bbox; ordinary bbox boundary rules are unchanged.
+
+移除 `--dry-run` 后即可进行需要确认的下载。其他选项包括 `--style`、`--pixel-ratio`、`--image` 和 `--api-base-url`；完整说明见 `python3 scripts/download.py --help`。
+
 Remove `--dry-run` to perform a confirmed download. Other options include
-`--style`, `--pixel-ratio`, `--include-ideographs`, `--image` and
-`--api-base-url`; run `python3 scripts/download.py --help` for details.
+`--style`, `--pixel-ratio`, `--image` and `--api-base-url`; run
+`python3 scripts/download.py --help` for details.
 
 下载脚本会拒绝跨越日期变更线的包围盒、超出 Web Mercator 范围的纬度，以及超出 0–22 的层级范围。高于 16 的层级可能只是对已有数据进行过度缩放，不会增加源数据细节。
 
 The wrapper rejects bounding boxes that cross the antimeridian, out-of-range
 Web Mercator latitudes and zoom ranges outside 0-22. Zooms above 16 can overzoom
 a source without adding source detail.
+
+### CJK 字形 / CJK glyphs
+
+如需将中文、日文和韩文字形资源包含在离线缓存中，添加 `--include-ideographs`。预览和实际下载应保留相同的选项；字形资源会增加下载内容，但不会改变空间瓦片网格的估算。
+
+Add `--include-ideographs` to include Chinese, Japanese and Korean glyph
+resources in the offline cache. Keep the option in both preview and actual
+download commands. Glyph resources add to the download without changing the
+spatial tile-grid estimate.
+
+```sh
+python3 scripts/download.py \
+  --bbox 116.38,39.90,116.42,39.94 \
+  --min-zoom 11 --max-zoom 12 \
+  --include-ideographs \
+  --output data/map-cjk.db \
+  --dry-run
+```
 
 ## 导出 MBTiles / Export MBTiles
 
